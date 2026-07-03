@@ -1,0 +1,16 @@
+# ============================================================
+# Grafana Dashboard 自动配置
+# 此文件让 Grafana 自动加载 dashboards 目录下的所有 JSON
+# ============================================================
+
+apiVersion: 1
+
+providers:
+  - name: 'IM Dashboards'
+    orgId: 1
+    folder: 'IM'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards

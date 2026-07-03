@@ -1,0 +1,122 @@
+{
+  "title": "IM 业务监控大盘",
+  "version": 2,
+  "panels": [
+    {
+      "title": "在线用户数",
+      "type": "stat",
+      "targets": [{
+        "expr": "im_online_users",
+        "legendFormat": "在线用户"
+      }]
+    },
+    {
+      "title": "消息发送 TPS",
+      "type": "graph",
+      "targets": [{
+        "expr": "rate(im_messages_sent_total[1m])",
+        "legendFormat": "msg/s"
+      }]
+    },
+    {
+      "title": "消息延迟 P50/P99",
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(im_messages_send_duration_ms_bucket[5m])) by (le))",
+          "legendFormat": "P50"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(im_messages_send_duration_ms_bucket[5m])) by (le))",
+          "legendFormat": "P99"
+        }
+      ]
+    },
+    {
+      "title": "消息发送失败率",
+      "type": "graph",
+      "targets": [{
+        "expr": "rate(im_messages_failed_total[5m]) / rate(im_messages_sent_total[5m])",
+        "legendFormat": "失败率"
+      }]
+    },
+    {
+      "title": "敏感词命中次数",
+      "type": "stat",
+      "targets": [{
+        "expr": "rate(im_rc_sensitive_hit_total[5m])",
+        "legendFormat": "次/秒"
+      }]
+    },
+    {
+      "title": "频控拦截次数",
+      "type": "stat",
+      "targets": [{
+        "expr": "rate(im_rc_rate_limit_total[5m])",
+        "legendFormat": "次/秒"
+      }]
+    },
+    {
+      "title": "群组总数",
+      "type": "stat",
+      "targets": [{
+        "expr": "im_groups_total",
+        "legendFormat": "群组数"
+      }]
+    },
+    {
+      "title": "总会话数",
+      "type": "stat",
+      "targets": [{
+        "expr": "im_conversations_total",
+        "legendFormat": "会话数"
+      }]
+    },
+    {
+      "title": "机器人 Webhook 调用",
+      "type": "graph",
+      "targets": [{
+        "expr": "rate(im_bot_webhook_invoked_total[5m])",
+        "legendFormat": "invocations/s"
+      }]
+    },
+    {
+      "title": "机器人 Webhook 失败率",
+      "type": "graph",
+      "targets": [{
+        "expr": "rate(im_bot_webhook_failed_total[5m]) / rate(im_bot_webhook_invoked_total[5m])",
+        "legendFormat": "失败率"
+      }]
+    },
+    {
+      "title": "SSE 活跃连接数",
+      "type": "stat",
+      "targets": [{
+        "expr": "im_bot_sse_active_connections",
+        "legendFormat": "活跃连接"
+      }]
+    },
+    {
+      "title": "Webhook 延迟 P50/P99",
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(im_bot_webhook_duration_ms_bucket[5m])) by (le))",
+          "legendFormat": "P50"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(im_bot_webhook_duration_ms_bucket[5m])) by (le))",
+          "legendFormat": "P99"
+        }
+      ]
+    },
+    {
+      "title": "@触发事件",
+      "type": "stat",
+      "targets": [{
+        "expr": "rate(im_bot_at_mention_detected_total[5m])",
+        "legendFormat": "次/秒"
+      }]
+    }
+  ]
+}

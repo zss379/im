@@ -1,0 +1,70 @@
+{
+  "title": "IM 基础设施监控大盘",
+  "version": 1,
+  "panels": [
+    {
+      "title": "MySQL QPS",
+      "type": "graph",
+      "targets": [{
+        "expr": "rate(mysql_global_status_questions[5m])",
+        "legendFormat": "QPS"
+      }]
+    },
+    {
+      "title": "MySQL 连接数",
+      "type": "graph",
+      "targets": [{
+        "expr": "mysql_global_status_threads_connected",
+        "legendFormat": "连接数"
+      }]
+    },
+    {
+      "title": "Redis 内存使用",
+      "type": "graph",
+      "targets": [{
+        "expr": "redis_memory_used_bytes",
+        "legendFormat": "已用内存"
+      }]
+    },
+    {
+      "title": "Redis 命中率",
+      "type": "graph",
+      "targets": [{
+        "expr": "rate(redis_keyspace_hits_total[5m]) / (rate(redis_keyspace_hits_total[5m]) + rate(redis_keyspace_misses_total[5m]))",
+        "legendFormat": "命中率"
+      }]
+    },
+    {
+      "title": "MongoDB Ops",
+      "type": "graph",
+      "targets": [{
+        "expr": "rate(mongodb_metrics_document_total[5m])",
+        "legendFormat": "文档操作/秒"
+      }]
+    },
+    {
+      "title": "MongoDB 复制延迟",
+      "type": "graph",
+      "targets": [{
+        "expr": "mongodb_replset_member_replication_lag_seconds",
+        "legendFormat": "{{labels.instance}}"
+      }]
+    },
+    {
+      "title": "Kafka 消息速率",
+      "type": "graph",
+      "targets": [{
+        "expr": "rate(kafka_topic_partition_current_offset[5m])",
+        "legendFormat": "{{labels.topic}}"
+      }]
+    },
+    {
+      "title": "Container CPU",
+      "type": "graph",
+      "targets": [{
+        "expr": "rate(container_cpu_usage_seconds_total[5m])",
+        "legendFormat": "{{labels.container}}"
+      }]
+    }
+  ]
+}

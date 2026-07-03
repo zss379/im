@@ -1,0 +1,126 @@
+# ============================================================
+# 数莲 PaaS IM 系统 — 告警规则
+# ============================================================
+
+groups:
+  - name: im-service
+    interval: 30s
+    rules:
+      # --- 服务可用性 ---
+      - alert: ServiceDown
+        expr: up{job=~"im-.*"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.job }} 服务不可用"
+          description: "{{ $labels.instance }} 已离线超过 1 分钟"
+
+      # --- 消息延迟 ---
+      - alert: HighMessageLatency_P99
+        expr: histogram_quantile(0.99, sum(rate(im_messages_send_duration_ms_bucket[5m])) by (le)) > 500
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "消息 P99 延迟超过 500ms"
+          description: "当前 P99: {{ $value }}ms"
+
+      - alert: HighMessageLatency_P50
+        expr: histogram_quantile(0.50, sum(rate(im_messages_send_duration_ms_bucket[5m])) by (le)) > 100
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "消息 P50 延迟超过 100ms"
+          description: "当前 P50: {{ $value }}ms"
+
+      # --- 消息发送失败 ---
+      - alert: HighMessageFailureRate
+        expr: rate(im_messages_failed_total[5m]) / (rate(im_messages_sent_total[5m]) + rate(im_messages_failed_total[5m])) > 0.01
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "消息发送失败率超过 1%"
+          description: "当前失败率: {{ $value | humanizePercentage }}"
+
+      # --- 在线用户数异常 ---
+      - alert: OnlineUsersDrop
+        expr: avg_over_time(im_online_users[10m]) < avg_over_time(im_online_users[1h]) * 0.7
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "在线用户数异常下降"
+          description: "当前在线: {{ $value }}, 1小时前均值: {{ $value / 0.7 }}"
+
+      # --- 资源使用 ---
+      - alert: HighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total[5m]) > 0.8
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "CPU 使用率超过 80%"
+          description: "{{ $labels.container }} CPU 使用率: {{ $value | humanizePercentage }}"
+
+      - alert: HighMemoryUsage
+        expr: container_memory_usage_bytes / container_spec_memory_limit_bytes > 0.8
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "内存使用率超过 80%"
+          description: "{{ $labels.container }} 内存使用率: {{ $value | humanizePercentage }}"
+
+  - name: im-middleware
+    interval: 30s
+    rules:
+      # --- Kafka ---
+      - alert: KafkaConsumerLag
+        expr: kafka_consumer_lag > 10000
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Kafka 消费者堆积"
+          description: "Topic: {{ $labels.topic }}, 分区: {{ $labels.partition }}, Lag: {{ $value }}"
+
+      # --- MongoDB ---
+      - alert: MongoDBReplicationLag
+        expr: mongodb_replset_member_replication_lag_seconds > 10
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "MongoDB 复制延迟超过 10s"
+          description: "实例: {{ $labels.instance }}, 延迟: {{ $value }}s"
+
+      # --- Redis ---
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.8
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Redis 内存使用率超过 80%"
+          description: "当前: {{ $value | humanizePercentage }}"
+
+      # --- MySQL ---
+      - alert: MySQLConnectionsHigh
+        expr: mysql_global_status_threads_connected / mysql_global_variables_max_connections > 0.8
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "MySQL 连接数超过 80%"
+          description: "当前连接: {{ $value }}"
+
+  - name: im-bot-svc
+    interval: 30s
+    rules:
+      - alert: BotWebhookHighFailureRate
+        expr: rate(im_bot_webhook_failed_total[5m]) / (rate(im_bot_webhook_invoked_total[5m]) + rate(im_bot_webhook_failed_total[5m])) > 0.1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "机器人 Webhook 失败率超过 10%"
+          description: "Bot: {{ $labels.bot_id }}, 失败率: {{ $value | humanizePercentage }}"
+
+      - alert: BotSSEConnectionFull
+        expr: im_bot_sse_active_connections / im_bot_sse_max_connections > 0.9
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "SSE 连接池即将耗尽"
+          description: "活跃: {{ $value }}/{{ $labels.max }}"

@@ -1,0 +1,435 @@
+version: "3.8"
+
+# ============================================================
+# 数莲 PaaS IM 系统 — 开发环境 Docker Compose
+# 使用: docker-compose up -d
+# 停止: docker-compose down
+# 重置全部数据: docker-compose down -v
+# ============================================================
+
+x-common-env: &common-env
+  LOG_LEVEL: ${LOG_LEVEL:-debug}
+  JAEGER_ENDPOINT: http://jaeger:14268/api/traces
+  PROMETHEUS_ENABLED: "true"
+
+x-healthcheck: &healthcheck
+  interval: 15s
+  timeout: 5s
+  retries: 5
+  start_period: 30s
+
+services:
+  # === 数据库 ===
+  mysql:
+    image: mysql:8.0
+    container_name: im-mysql
+    restart: unless-stopped
+    ports: ["${MYSQL_PORT:-3306}:3306"]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123}
+      MYSQL_DATABASE: im_shared
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ../db/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ../db/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --max_connections=500
+      --innodb_buffer_pool_size=1G
+      --slow_query_log=1
+      --long_query_time=2
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-root123}"]
+      <<: *healthcheck
+
+  redis:
+    image: redis:7.0-alpine
+    container_name: im-redis
+    restart: unless-stopped
+    ports: ["${REDIS_PORT:-6379}:6379"]
+    volumes:
+      - redis_data:/data
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD:-redis123}
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis123}", "ping"]
+      <<: *healthcheck
+
+  mongo:
+    image: mongo:7.0
+    container_name: im-mongo
+    restart: unless-stopped
+    ports: ["${MONGO_PORT:-27017}:27017"]
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-mongo123}
+      MONGO_INITDB_DATABASE: im_prod
+    command: ["mongod", "--wiredTigerCacheSizeGB", "1"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      <<: *healthcheck
+
+  # === 消息队列 ===
+  kafka:
+    image: bitnami/kafka:3.5
+    container_name: im-kafka
+    restart: unless-stopped
+    ports:
+      - "${KAFKA_PORT:-9092}:9092"
+    environment:
+      KAFKA_CFG_NODE_ID: 0
+      KAFKA_CFG_PROCESS_ROLES: controller,broker
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://localhost:${KAFKA_PORT:-9092}
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_CFG_NUM_PARTITIONS: 3
+      KAFKA_CFG_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_CFG_LOG_RETENTION_HOURS: 24
+      KAFKA_CFG_LOG_SEGMENT_BYTES: 1073741824
+    volumes:
+      - kafka_data:/bitnami/kafka
+    healthcheck:
+      test: ["CMD", "kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+      <<: *healthcheck
+
+  # === 对象存储 ===
+  minio:
+    image: minio/minio:latest
+    container_name: im-minio
+    restart: unless-stopped
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_BROWSER: "on"
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      <<: *healthcheck
+
+  # === 可观测性 ===
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: im-prometheus
+    restart: unless-stopped
+    ports: ["${PROMETHEUS_PORT:-9090}:9090"]
+    volumes:
+      - ../prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+      - "--storage.tsdb.path=/prometheus"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: im-grafana
+    restart: unless-stopped
+    ports: ["${GRAFANA_PORT:-3000}:3000"]
+    depends_on: [prometheus]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin123}
+      GF_INSTALL_PLUGINS: ""
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ../grafana/provisioning:/etc/grafana/provisioning
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: im-jaeger
+    restart: unless-stopped
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"
+      - "14268:14268"
+      - "4318:4318"
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+
+  # === 微服务 ===
+  api-gateway:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      target: api-gateway
+    container_name: im-api-gateway
+    restart: unless-stopped
+    ports: ["${API_PORT:-8080}:8080"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      <<: *common-env
+      SERVICE_NAME: api-gateway
+      SERVICE_PORT: "8080"
+      DB_DSN: "root:${MYSQL_ROOT_PASSWORD:-root123}@tcp(mysql:3306)/im_shared?charset=utf8mb4&parseTime=True&loc=Local"
+      DB_MAX_OPEN: "50"
+      DB_MAX_IDLE: "10"
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis123}
+      REDIS_DB: "0"
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
+      JWT_EXPIRE_SECONDS: "604800"
+      KAFKA_BROKERS: kafka:9092
+
+  user-svc:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      target: user-svc
+    container_name: im-user-svc
+    restart: unless-stopped
+    ports: ["8082:8082"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      <<: *common-env
+      SERVICE_NAME: user-svc
+      SERVICE_PORT: "8082"
+      DB_DSN: "root:${MYSQL_ROOT_PASSWORD:-root123}@tcp(mysql:3306)/im_shared?charset=utf8mb4&parseTime=True&loc=Local"
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis123}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
+      JWT_EXPIRE_SECONDS: "604800"
+      OPENIM_API_URL: http://openim:10002
+      OPENIM_SECRET: ${OPENIM_SECRET:-openim-dev-secret}
+
+  message-svc:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      target: message-svc
+    container_name: im-message-svc
+    restart: unless-stopped
+    ports: ["8081:8081"]
+    depends_on:
+      mongo: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      <<: *common-env
+      SERVICE_NAME: message-svc
+      SERVICE_PORT: "8081"
+      MONGO_URI: "mongodb://${MONGO_USER:-admin}:${MONGO_PASSWORD:-mongo123}@mongo:27017/im_prod?authSource=admin"
+      MONGO_DB: im_prod
+      MONGO_MIN_POOL: "5"
+      MONGO_MAX_POOL: "50"
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_MSG_TOPIC: im_messages
+      KAFKA_AUDIT_TOPIC: im_audit_message
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis123}
+      RC_SVC_ADDR: rc-svc:8085
+      FILE_SVC_ADDR: file-svc:8087
+
+  conversation-svc:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      target: conversation-svc
+    container_name: im-conv-svc
+    restart: unless-stopped
+    ports: ["8084:8084"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      <<: *common-env
+      SERVICE_NAME: conversation-svc
+      SERVICE_PORT: "8084"
+      DB_DSN: "root:${MYSQL_ROOT_PASSWORD:-root123}@tcp(mysql:3306)/im_shared?charset=utf8mb4&parseTime=True&loc=Local"
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis123}
+      KAFKA_BROKERS: kafka:9092
+
+  group-svc:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      target: group-svc
+    container_name: im-group-svc
+    restart: unless-stopped
+    ports: ["8083:8083"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      <<: *common-env
+      SERVICE_NAME: group-svc
+      SERVICE_PORT: "8083"
+      DB_DSN: "root:${MYSQL_ROOT_PASSWORD:-root123}@tcp(mysql:3306)/im_shared?charset=utf8mb4&parseTime=True&loc=Local"
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis123}
+      OPENIM_API_URL: http://openim:10002
+      OPENIM_SECRET: ${OPENIM_SECRET:-openim-dev-secret}
+
+  contact-svc:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      target: contact-svc
+    container_name: im-contact-svc
+    restart: unless-stopped
+    ports: ["8090:8090"]
+    depends_on:
+      mysql: { condition: service_healthy }
+    environment:
+      <<: *common-env
+      SERVICE_NAME: contact-svc
+      SERVICE_PORT: "8090"
+      DB_DSN: "root:${MYSQL_ROOT_PASSWORD:-root123}@tcp(mysql:3306)/im_shared?charset=utf8mb4&parseTime=True&loc=Local"
+
+  rc-svc:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      target: rc-svc
+    container_name: im-rc-svc
+    restart: unless-stopped
+    ports: ["8085:8085"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      <<: *common-env
+      SERVICE_NAME: rc-svc
+      SERVICE_PORT: "8085"
+      DB_DSN: "root:${MYSQL_ROOT_PASSWORD:-root123}@tcp(mysql:3306)/im_shared?charset=utf8mb4&parseTime=True&loc=Local"
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis123}
+
+  bot-svc:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      target: bot-svc
+    container_name: im-bot-svc
+    restart: unless-stopped
+    ports: ["8082:8082"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    environment:
+      <<: *common-env
+      SERVICE_NAME: bot-svc
+      SERVICE_PORT: "8082"
+      DB_DSN: "root:${MYSQL_ROOT_PASSWORD:-root123}@tcp(mysql:3306)/im_shared?charset=utf8mb4&parseTime=True&loc=Local"
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis123}
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_BOT_TRIGGER_TOPIC: bot_trigger
+      BOT_WEBHOOK_SYNC_TIMEOUT: 3s
+      BOT_WEBHOOK_MAX_RETRIES: "3"
+      BOT_SSE_MAX_CONNECTIONS: "1000"
+      BOT_MSG_RATE_PER_SEC: "10"
+      OPENIM_API_URL: http://openim:10002
+      OPENIM_SECRET: ${OPENIM_SECRET:-openim-dev-secret}
+      MESSAGE_SVC_ADDR: message-svc:8081
+
+  file-svc:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      target: file-svc
+    container_name: im-file-svc
+    restart: unless-stopped
+    ports: ["8087:8087"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    environment:
+      <<: *common-env
+      SERVICE_NAME: file-svc
+      SERVICE_PORT: "8087"
+      DB_DSN: "root:${MYSQL_ROOT_PASSWORD:-root123}@tcp(mysql:3306)/im_shared?charset=utf8mb4&parseTime=True&loc=Local"
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_BUCKET: im-files
+      MINIO_PUBLIC_BUCKET: im-public
+      FILE_PREVIEW_EXPIRE_SEC: "3600"
+
+  audit-svc:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      target: audit-svc
+    container_name: im-audit-svc
+    restart: unless-stopped
+    ports: ["8088:8088"]
+    depends_on:
+      mongo: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    environment:
+      <<: *common-env
+      SERVICE_NAME: audit-svc
+      SERVICE_PORT: "8088"
+      MONGO_URI: "mongodb://${MONGO_USER:-admin}:${MONGO_PASSWORD:-mongo123}@mongo:27017/im_prod?authSource=admin"
+      MONGO_DB: im_prod
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_AUDIT_TOPIC: im_audit_message
+
+  card-svc:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      target: card-svc
+    container_name: im-card-svc
+    restart: unless-stopped
+    ports: ["8089:8089"]
+    depends_on:
+      mysql: { condition: service_healthy }
+    environment:
+      <<: *common-env
+      SERVICE_NAME: card-svc
+      SERVICE_PORT: "8089"
+      DB_DSN: "root:${MYSQL_ROOT_PASSWORD:-root123}@tcp(mysql:3306)/im_shared?charset=utf8mb4&parseTime=True&loc=Local"
+      MESSAGE_SVC_ADDR: message-svc:8081
+
+  # === OpenIM Server (v3.8) ===
+  openim:
+    image: openim/server:v3.8
+    container_name: im-openim
+    restart: unless-stopped
+    ports:
+      - "10001:10001"
+      - "10002:10002"
+      - "10003:10003"
+      - "10004:10004"
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      mongo: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    environment:
+      OPENIM_API_PORT: "10002"
+      OPENIM_WS_PORT: "10001"
+      MSG_GATEWAY_PORT: "10004"
+      # OpenIM v3.8 的配置变量参照官方文档
+    volumes:
+      - ../openim/config.yaml:/openim/config/config.yaml
+
+volumes:
+  mysql_data:
+  redis_data:
+  mongo_data:
+  kafka_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:

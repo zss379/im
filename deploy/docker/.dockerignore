@@ -1,0 +1,36 @@
+# Git
+.git
+.gitignore
+
+# Build
+bin/
+tmp/
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docs
+docs/
+*.md
+
+# CI
+.github/
+
+# Env
+.env
+.env.*
+
+# Docker
+deploy/
+docker-compose*.yml
+
+# Test
+*_test.go
+test/
