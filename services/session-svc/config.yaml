@@ -1,0 +1,18 @@
+server:
+  port: 8083
+  jwt_secret: "changeme-in-production"
+
+mysql:
+  dsn: "root:123456@tcp(127.0.0.1:3306)/im_session?charset=utf8mb4&parseTime=True&loc=Local"
+
+redis:
+  addr: "127.0.0.1:6379"
+  password: ""
+  db: 3
+
+log:
+  json: false
+
+prometheus:
+  enabled: true
+  path: /metrics
