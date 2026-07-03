@@ -26,9 +26,15 @@ type messageCache interface {
 	IsRead(ctx context.Context, conversationID int64, msgID string) (bool, int64, error)
 }
 
+// rcChecker defines the interface for risk-control preflight check.
+type rcChecker interface {
+	CheckChain(ctx context.Context, req *CheckChainReq) (*PreflightResult, error)
+}
+
 // messageProducer defines the interface for Kafka message publishing.
 type messageProducer interface {
 	PublishMessageNew(ctx context.Context, event *mq.MessagePushEvent) error
 	PublishMessageRecalled(ctx context.Context, event *mq.MessagePushEvent) error
 	PublishBotTrigger(ctx context.Context, msgID string, tenantID int64, convID string, convType int8, groupID *int64, senderID int64, senderName string, content string, msgType int8, atUserIDs []int64) error
+	PublishBlockedMessage(ctx context.Context, event *mq.BlockedMessageEvent) error
 }

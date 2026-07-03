@@ -13,12 +13,12 @@ import (
 // mock implementations
 
 type mockRepo struct {
-	insertFunc           func(ctx context.Context, msg *model.Message) error
-	findByMsgIDFunc      func(ctx context.Context, msgID string) (*model.Message, error)
+	insertFunc            func(ctx context.Context, msg *model.Message) error
+	findByMsgIDFunc       func(ctx context.Context, msgID string) (*model.Message, error)
 	findByClientMsgIDFunc func(ctx context.Context, conversationID int64, clientMsgID string) (*model.Message, error)
 	findByConversationFunc func(ctx context.Context, conversationID int64, cursor string, limit int, direction int) ([]model.Message, string, error)
-	updateStatusFunc     func(ctx context.Context, msgID string, status int8, recallTime *time.Time) error
-	searchFunc           func(ctx context.Context, req *model.SearchReq) ([]model.Message, int64, error)
+	updateStatusFunc      func(ctx context.Context, msgID string, status int8, recallTime *time.Time) error
+	searchFunc            func(ctx context.Context, req *model.SearchReq) ([]model.Message, int64, error)
 }
 
 func (m *mockRepo) Insert(ctx context.Context, msg *model.Message) error {
@@ -64,10 +64,10 @@ func (m *mockRepo) Search(ctx context.Context, req *model.SearchReq) ([]model.Me
 }
 
 type mockCache struct {
-	tryDedupFunc    func(ctx context.Context, clientMsgID string) (bool, error)
+	tryDedupFunc     func(ctx context.Context, clientMsgID string) (bool, error)
 	releaseDedupFunc func(ctx context.Context, clientMsgID string) error
-	markReadFunc    func(ctx context.Context, conversationID int64, msgID string) error
-	isReadFunc      func(ctx context.Context, conversationID int64, msgID string) (bool, int64, error)
+	markReadFunc     func(ctx context.Context, conversationID int64, msgID string) error
+	isReadFunc       func(ctx context.Context, conversationID int64, msgID string) (bool, int64, error)
 }
 
 func (m *mockCache) TryDedup(ctx context.Context, clientMsgID string) (bool, error) {
@@ -102,6 +102,7 @@ type mockProducer struct {
 	publishMessageNewFunc      func(ctx context.Context, event *mq.MessagePushEvent) error
 	publishMessageRecalledFunc func(ctx context.Context, event *mq.MessagePushEvent) error
 	publishBotTriggerFunc      func(ctx context.Context, msgID string, tenantID int64, convID string, convType int8, groupID *int64, senderID int64, senderName string, content string, msgType int8, atUserIDs []int64) error
+	publishBlockedMessageFunc  func(ctx context.Context, event *mq.BlockedMessageEvent) error
 }
 
 func (m *mockProducer) PublishMessageNew(ctx context.Context, event *mq.MessagePushEvent) error {
@@ -125,11 +126,30 @@ func (m *mockProducer) PublishBotTrigger(ctx context.Context, msgID string, tena
 	return nil
 }
 
-func newTestService(repo messageRepository, cache messageCache, producer messageProducer) *MessageService {
+func (m *mockProducer) PublishBlockedMessage(ctx context.Context, event *mq.BlockedMessageEvent) error {
+	if m.publishBlockedMessageFunc != nil {
+		return m.publishBlockedMessageFunc(ctx, event)
+	}
+	return nil
+}
+
+type mockRCChecker struct {
+	checkChainFunc func(ctx context.Context, req *CheckChainReq) (*PreflightResult, error)
+}
+
+func (m *mockRCChecker) CheckChain(ctx context.Context, req *CheckChainReq) (*PreflightResult, error) {
+	if m.checkChainFunc != nil {
+		return m.checkChainFunc(ctx, req)
+	}
+	return &PreflightResult{Passed: true}, nil
+}
+
+func newTestService(repo messageRepository, cache messageCache, producer messageProducer, rc rcChecker) *MessageService {
 	return &MessageService{
 		msgRepo:    repo,
 		cache:      cache,
 		producer:   producer,
+		rcClient:   rc,
 		botMsgRate: 10,
 	}
 }
@@ -151,8 +171,9 @@ func TestSendMessage_Success(t *testing.T) {
 		},
 	}
 	producer := &mockProducer{}
+	rc := &mockRCChecker{}
 
-	svc := newTestService(repo, cache, producer)
+	svc := newTestService(repo, cache, producer, rc)
 	req := &model.SendMessageReq{
 		ClientMsgID:    "client-001",
 		ConversationID: 50001,
@@ -202,8 +223,9 @@ func TestSendMessage_Dedup(t *testing.T) {
 		},
 	}
 	producer := &mockProducer{}
+	rc := &mockRCChecker{}
 
-	svc := newTestService(repo, cache, producer)
+	svc := newTestService(repo, cache, producer, rc)
 	req := &model.SendMessageReq{
 		ClientMsgID:    "dup-client-id",
 		ConversationID: 50001,
@@ -241,8 +263,9 @@ func TestSendMessage_BotTriggerPublished(t *testing.T) {
 			return nil
 		},
 	}
+	rc := &mockRCChecker{}
 
-	svc := newTestService(repo, cache, producer)
+	svc := newTestService(repo, cache, producer, rc)
 	req := &model.SendMessageReq{
 		ConversationID: 50001,
 		MsgType:        1,
@@ -277,9 +300,10 @@ func TestSendMessage_BotTriggerSkippedForBotSender(t *testing.T) {
 			return nil
 		},
 	}
+	rc := &mockRCChecker{}
 
 	botID := int64(4001)
-	svc := newTestService(repo, cache, producer)
+	svc := newTestService(repo, cache, producer, rc)
 	req := &model.SendMessageReq{
 		ConversationID: 50001,
 		MsgType:        1,
@@ -313,8 +337,9 @@ func TestSendMessage_DBErrorReleasesDedup(t *testing.T) {
 		},
 	}
 	producer := &mockProducer{}
+	rc := &mockRCChecker{}
 
-	svc := newTestService(repo, cache, producer)
+	svc := newTestService(repo, cache, producer, rc)
 	req := &model.SendMessageReq{
 		ClientMsgID:    "client-rollback",
 		ConversationID: 50001,
@@ -332,6 +357,230 @@ func TestSendMessage_DBErrorReleasesDedup(t *testing.T) {
 	}
 }
 
+func TestSendMessage_PreflightPasses(t *testing.T) {
+	var capturedMsg *model.Message
+
+	repo := &mockRepo{
+		insertFunc: func(ctx context.Context, msg *model.Message) error {
+			capturedMsg = msg
+			return nil
+		},
+	}
+	cache := &mockCache{
+		tryDedupFunc: func(ctx context.Context, id string) (bool, error) {
+			return false, nil
+		},
+	}
+	producer := &mockProducer{}
+
+	// RC passes all checks
+	rc := &mockRCChecker{
+		checkChainFunc: func(ctx context.Context, req *CheckChainReq) (*PreflightResult, error) {
+			return &PreflightResult{Passed: true}, nil
+		},
+	}
+
+	svc := newTestService(repo, cache, producer, rc)
+	req := &model.SendMessageReq{
+		ConversationID: 50001,
+		MsgType:        1,
+		Content:        model.MsgContent{"text": "safe message"},
+		SenderID:       20001,
+	}
+
+	resp, err := svc.SendMessage(context.Background(), req, 1001)
+	if err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	if resp.MsgID == "" {
+		t.Error("expected non-empty MsgID")
+	}
+	if capturedMsg == nil {
+		t.Fatal("message should have been persisted")
+	}
+}
+
+func TestSendMessage_SensitiveWordBlocked(t *testing.T) {
+	var blockedEventPublished bool
+
+	repo := &mockRepo{}
+	cache := &mockCache{}
+	producer := &mockProducer{
+		publishBlockedMessageFunc: func(ctx context.Context, event *mq.BlockedMessageEvent) error {
+			blockedEventPublished = true
+			if event.BlockedReason != "sensitive_word" {
+				t.Errorf("blocked_reason: got %s, want sensitive_word", event.BlockedReason)
+			}
+			return nil
+		},
+	}
+
+	rc := &mockRCChecker{
+		checkChainFunc: func(ctx context.Context, req *CheckChainReq) (*PreflightResult, error) {
+			return &PreflightResult{
+				Passed:    false,
+				Blocked:   true,
+				HitWords:  []string{"badword"},
+				BlockedReason: "sensitive_word",
+			}, nil
+		},
+	}
+
+	svc := newTestService(repo, cache, producer, rc)
+	req := &model.SendMessageReq{
+		ConversationID: 50001,
+		MsgType:        1,
+		Content:        model.MsgContent{"text": "contains badword"},
+		SenderID:       20001,
+	}
+
+	_, err := svc.SendMessage(context.Background(), req, 1001)
+	if err == nil {
+		t.Fatal("expected error for blocked message")
+	}
+
+	var blocked *ErrBlocked
+	if !errors.As(err, &blocked) {
+		t.Fatalf("expected ErrBlocked, got %T", err)
+	}
+	if blocked.Reason != "sensitive_word" {
+		t.Errorf("reason: got %s, want sensitive_word", blocked.Reason)
+	}
+
+	if !blockedEventPublished {
+		t.Error("blocked-message event should have been published")
+	}
+}
+
+func TestSendMessage_RateLimited(t *testing.T) {
+	repo := &mockRepo{}
+	cache := &mockCache{}
+	producer := &mockProducer{}
+
+	rc := &mockRCChecker{
+		checkChainFunc: func(ctx context.Context, req *CheckChainReq) (*PreflightResult, error) {
+			return &PreflightResult{
+				Passed:      false,
+				RateLimited: true,
+				RetryAfter:  1,
+			}, nil
+		},
+	}
+
+	svc := newTestService(repo, cache, producer, rc)
+	req := &model.SendMessageReq{
+		ConversationID: 50001,
+		MsgType:        1,
+		Content:        model.MsgContent{"text": "too fast"},
+		SenderID:       20001,
+	}
+
+	_, err := svc.SendMessage(context.Background(), req, 1001)
+	if err == nil {
+		t.Fatal("expected error for rate limited message")
+	}
+
+	var rateLimited *ErrRateLimited
+	if !errors.As(err, &rateLimited) {
+		t.Fatalf("expected ErrRateLimited, got %T", err)
+	}
+	if rateLimited.RetryAfter != 1 {
+		t.Errorf("RetryAfter: got %d, want 1", rateLimited.RetryAfter)
+	}
+}
+
+func TestSendMessage_RCSvcTimeout_FailOpen(t *testing.T) {
+	var capturedMsg *model.Message
+
+	repo := &mockRepo{
+		insertFunc: func(ctx context.Context, msg *model.Message) error {
+			capturedMsg = msg
+			return nil
+		},
+	}
+	cache := &mockCache{
+		tryDedupFunc: func(ctx context.Context, id string) (bool, error) {
+			return false, nil
+		},
+	}
+	producer := &mockProducer{}
+
+	// RC returns error (timeout) → fail-open
+	rc := &mockRCChecker{
+		checkChainFunc: func(ctx context.Context, req *CheckChainReq) (*PreflightResult, error) {
+			return nil, errors.New("connection timeout")
+		},
+	}
+
+	svc := newTestService(repo, cache, producer, rc)
+	req := &model.SendMessageReq{
+		ConversationID: 50001,
+		MsgType:        1,
+		Content:        model.MsgContent{"text": "test during timeout"},
+		SenderID:       20001,
+	}
+
+	resp, err := svc.SendMessage(context.Background(), req, 1001)
+	if err != nil {
+		t.Fatalf("expected fail-open to allow message, got: %v", err)
+	}
+	if resp.MsgID == "" {
+		t.Error("expected non-empty MsgID")
+	}
+	if capturedMsg == nil {
+		t.Fatal("message should have been persisted despite rc-svc timeout")
+	}
+}
+
+func TestSendMessage_NonTextContentSkippedSensitiveButRateLimited(t *testing.T) {
+	var capturedMsg *model.Message
+	var checkChainCalled bool
+
+	repo := &mockRepo{
+		insertFunc: func(ctx context.Context, msg *model.Message) error {
+			capturedMsg = msg
+			return nil
+		},
+	}
+	cache := &mockCache{
+		tryDedupFunc: func(ctx context.Context, id string) (bool, error) {
+			return false, nil
+		},
+	}
+	producer := &mockProducer{}
+
+	rc := &mockRCChecker{
+		checkChainFunc: func(ctx context.Context, req *CheckChainReq) (*PreflightResult, error) {
+			checkChainCalled = true
+			// Empty content (non-text msg) → sensitive check skipped server-side, rate limit still checked
+			return &PreflightResult{Passed: true}, nil
+		},
+	}
+
+	svc := newTestService(repo, cache, producer, rc)
+	// Image message with no text content
+	req := &model.SendMessageReq{
+		ConversationID: 50001,
+		MsgType:        model.MsgTypeImage,
+		Content:        model.MsgContent{"url": "http://example.com/img.png", "width": 800},
+		SenderID:       20001,
+	}
+
+	resp, err := svc.SendMessage(context.Background(), req, 1001)
+	if err != nil {
+		t.Fatalf("expected success, got: %v", err)
+	}
+	if resp.MsgID == "" {
+		t.Error("expected non-empty MsgID")
+	}
+	if capturedMsg == nil {
+		t.Fatal("message should have been persisted")
+	}
+	if !checkChainCalled {
+		t.Error("CheckChain should have been called (for rate limit check)")
+	}
+}
+
 func TestPullMessages_Success(t *testing.T) {
 	now := time.Now()
 	repo := &mockRepo{
@@ -344,8 +593,9 @@ func TestPullMessages_Success(t *testing.T) {
 	}
 	cache := &mockCache{}
 	producer := &mockProducer{}
+	rc := &mockRCChecker{}
 
-	svc := newTestService(repo, cache, producer)
+	svc := newTestService(repo, cache, producer, rc)
 	resp, err := svc.PullMessages(context.Background(), 50001, "cursor_abc", 20)
 	if err != nil {
 		t.Fatalf("PullMessages failed: %v", err)
@@ -389,8 +639,9 @@ func TestRecallMessage_Success(t *testing.T) {
 			return nil
 		},
 	}
+	rc := &mockRCChecker{}
 
-	svc := newTestService(repo, cache, producer)
+	svc := newTestService(repo, cache, producer, rc)
 	err := svc.RecallMessage(context.Background(), "msg_001", 20001, 1001)
 	if err != nil {
 		t.Fatalf("RecallMessage failed: %v", err)
@@ -416,8 +667,9 @@ func TestRecallMessage_NotSender(t *testing.T) {
 	}
 	cache := &mockCache{}
 	producer := &mockProducer{}
+	rc := &mockRCChecker{}
 
-	svc := newTestService(repo, cache, producer)
+	svc := newTestService(repo, cache, producer, rc)
 	err := svc.RecallMessage(context.Background(), "msg_001", 99999, 1001)
 	if err == nil {
 		t.Fatal("expected error for wrong sender")
@@ -439,8 +691,9 @@ func TestRecallMessage_Timeout(t *testing.T) {
 	}
 	cache := &mockCache{}
 	producer := &mockProducer{}
+	rc := &mockRCChecker{}
 
-	svc := newTestService(repo, cache, producer)
+	svc := newTestService(repo, cache, producer, rc)
 	err := svc.RecallMessage(context.Background(), "msg_001", 20001, 1001)
 	if err == nil {
 		t.Fatal("expected timeout error")
@@ -458,8 +711,9 @@ func TestRecallMessage_NotFound(t *testing.T) {
 	}
 	cache := &mockCache{}
 	producer := &mockProducer{}
+	rc := &mockRCChecker{}
 
-	svc := newTestService(repo, cache, producer)
+	svc := newTestService(repo, cache, producer, rc)
 	err := svc.RecallMessage(context.Background(), "nonexistent", 20001, 1001)
 	if err == nil {
 		t.Fatal("expected error for not found")
@@ -490,8 +744,9 @@ func TestForwardMessages_Individual(t *testing.T) {
 		},
 	}
 	producer := &mockProducer{}
+	rc := &mockRCChecker{}
 
-	svc := newTestService(repo, cache, producer)
+	svc := newTestService(repo, cache, producer, rc)
 	req := &model.ForwardReq{
 		MsgIDs:      []string{"m1", "m2", "m3"},
 		TargetID:    60001,
@@ -528,8 +783,9 @@ func TestForwardMessages_Merge(t *testing.T) {
 		},
 	}
 	producer := &mockProducer{}
+	rc := &mockRCChecker{}
 
-	svc := newTestService(repo, cache, producer)
+	svc := newTestService(repo, cache, producer, rc)
 	req := &model.ForwardReq{
 		MsgIDs:      []string{"m1", "m2"},
 		TargetID:    60001,
@@ -569,8 +825,9 @@ func TestMarkRead(t *testing.T) {
 	}
 	repo := &mockRepo{}
 	producer := &mockProducer{}
+	rc := &mockRCChecker{}
 
-	svc := newTestService(repo, cache, producer)
+	svc := newTestService(repo, cache, producer, rc)
 	err := svc.MarkRead(context.Background(), 50001, "msg_001")
 	if err != nil {
 		t.Fatalf("MarkRead failed: %v", err)
@@ -594,8 +851,9 @@ func TestGetReadReceipt(t *testing.T) {
 	}
 	repo := &mockRepo{}
 	producer := &mockProducer{}
+	rc := &mockRCChecker{}
 
-	svc := newTestService(repo, cache, producer)
+	svc := newTestService(repo, cache, producer, rc)
 
 	// Read message
 	resp, err := svc.GetReadReceipt(context.Background(), 50001, "msg_read")
@@ -633,8 +891,9 @@ func TestSearchMessages(t *testing.T) {
 	}
 	cache := &mockCache{}
 	producer := &mockProducer{}
+	rc := &mockRCChecker{}
 
-	svc := newTestService(repo, cache, producer)
+	svc := newTestService(repo, cache, producer, rc)
 	req := &model.SearchReq{Q: "found", ConversationID: 50001, Page: 1, PageSize: 20}
 
 	messages, total, err := svc.SearchMessages(context.Background(), req)

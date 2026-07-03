@@ -61,11 +61,13 @@ func main() {
 		log.Fatal().Err(err).Msg("ping redis")
 	}
 
-	producer := mq.NewProducer(cfg.Kafka.Brokers, cfg.Kafka.TopicMessagePush, cfg.Kafka.TopicBotTrigger)
+	producer := mq.NewProducer(cfg.Kafka.Brokers, cfg.Kafka.TopicMessagePush, cfg.Kafka.TopicBotTrigger, cfg.Kafka.TopicBlockedMessage)
+
+	rcClient := service.NewRCClient(cfg.RC.Addr, cfg.RC.Timeout)
 
 	msgRepo := repo.NewMessageRepo(db)
 	msgCache := repo.NewMessageCache(rdb)
-	msgSvc := service.NewMessageService(msgRepo, msgCache, producer, cfg.Rate.BotMsgPerSec)
+	msgSvc := service.NewMessageService(msgRepo, msgCache, producer, rcClient, cfg.Rate.BotMsgPerSec)
 	msgHandler := handler.NewMessageHandler(msgSvc, msgCache)
 
 	r := gin.New()

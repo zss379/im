@@ -10,6 +10,7 @@ type Config struct {
 	Server     ServerConfig     `yaml:"server"`
 	MySQL      MySQLConfig      `yaml:"mysql"`
 	Redis      RedisConfig      `yaml:"redis"`
+	Kafka      KafkaConfig      `yaml:"kafka"`
 	Log         LogConfig         `yaml:"log"`
 	Prometheus PrometheusConfig `yaml:"prometheus"`
 }
@@ -27,6 +28,13 @@ type RedisConfig struct {
 	Addr     string `yaml:"addr"`
 	Password string `yaml:"password"`
 	DB       int    `yaml:"db"`
+}
+
+type KafkaConfig struct {
+	Brokers          []string `yaml:"brokers"`
+	TopicMessagePush string   `yaml:"topic_message_push"`
+	TopicSessionSync string   `yaml:"topic_session_sync"`
+	ConsumerGroupID  string   `yaml:"consumer_group_id"`
 }
 
 type LogConfig struct {
@@ -62,6 +70,12 @@ func DefaultConfig() *Config {
 		Redis: RedisConfig{
 			Addr: "127.0.0.1:6379",
 			DB:   3,
+		},
+		Kafka: KafkaConfig{
+			Brokers:          []string{"127.0.0.1:9092"},
+			TopicMessagePush: "message_push",
+			TopicSessionSync: "session_sync",
+			ConsumerGroupID:  "session-svc",
 		},
 		Prometheus: PrometheusConfig{
 			Enabled: true,

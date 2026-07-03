@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,20 +19,32 @@ type MessageService struct {
 	msgRepo    messageRepository
 	cache      messageCache
 	producer   messageProducer
+	rcClient   rcChecker
 	botMsgRate int // bot 每秒最大消息数
 }
 
-func NewMessageService(msgRepo messageRepository, cache messageCache, producer messageProducer, botMsgRate int) *MessageService {
+func NewMessageService(msgRepo messageRepository, cache messageCache, producer messageProducer, rcClient rcChecker, botMsgRate int) *MessageService {
 	return &MessageService{
 		msgRepo:    msgRepo,
 		cache:      cache,
 		producer:   producer,
+		rcClient:   rcClient,
 		botMsgRate: botMsgRate,
 	}
 }
 
 // SendMessage 发送消息完整链路
 func (s *MessageService) SendMessage(ctx context.Context, req *model.SendMessageReq, tenantID int64) (*model.SendMessageResp, error) {
+	// 0. 发送前风控预检（敏感词 + 频控）
+	if err := s.preflightCheck(ctx, req, tenantID); err != nil {
+		var blocked *ErrBlocked
+		var rateLimited *ErrRateLimited
+		if errors.As(err, &blocked) {
+			s.publishBlockedEvent(ctx, req, tenantID, "sensitive_word", strings.Join(blocked.HitWords, ","))
+		}
+		return nil, err
+	}
+
 	// 1. 幂等去重
 	if req.ClientMsgID != "" {
 		dup, err := s.cache.TryDedup(ctx, req.ClientMsgID)
@@ -83,6 +97,7 @@ func (s *MessageService) SendMessage(ctx context.Context, req *model.SendMessage
 	pushEvent := &mq.MessagePushEvent{
 		MsgID:          msgID,
 		ConversationID: req.ConversationID,
+		ConvType:       req.ConvType,
 		SenderID:       req.SenderID,
 		MsgType:        req.MsgType,
 		SendTime:       msg.SendTime.UnixMilli(),
@@ -109,6 +124,61 @@ func (s *MessageService) SendMessage(ctx context.Context, req *model.SendMessage
 		SendTime: msg.SendTime.Format(time.RFC3339),
 		Status:   model.MsgStatusSent,
 	}, nil
+}
+
+// preflightCheck 发送前风控预检：调用 rc-svc CheckChain
+func (s *MessageService) preflightCheck(ctx context.Context, req *model.SendMessageReq, tenantID int64) error {
+	senderType := int8(1) // user
+	if req.SenderBotID != nil {
+		senderType = 2 // bot
+	}
+
+	text := getTextContent(req.Content)
+
+	result, err := s.rcClient.CheckChain(ctx, &CheckChainReq{
+		Content:    text,
+		SenderID:   req.SenderID,
+		SenderType: senderType,
+	})
+	if err != nil {
+		// Fail-open: log warning and allow message through
+		log.Warn().Err(err).Str("conv_id", fmt.Sprintf("%d", req.ConversationID)).
+			Int64("sender_id", req.SenderID).Msg("preflight check failed, allowing (fail-open)")
+		return nil
+	}
+
+	if result.Blocked {
+		return &ErrBlocked{
+			Reason:   "sensitive_word",
+			HitWords: result.HitWords,
+		}
+	}
+
+	if result.RateLimited {
+		return &ErrRateLimited{
+			RetryAfter: result.RetryAfter,
+		}
+	}
+
+	return nil
+}
+
+// publishBlockedEvent 异步发布拦截事件到 audit-svc
+func (s *MessageService) publishBlockedEvent(ctx context.Context, req *model.SendMessageReq, tenantID int64, reason, detail string) {
+	contentBytes, _ := json.Marshal(req.Content)
+	event := &mq.BlockedMessageEvent{
+		TenantID:       tenantID,
+		SenderID:       req.SenderID,
+		ConversationID: req.ConversationID,
+		ConvType:       req.ConvType,
+		MsgType:        req.MsgType,
+		Content:        string(contentBytes),
+		BlockedReason:  reason,
+		BlockedDetail:  detail,
+	}
+	if err := s.producer.PublishBlockedMessage(ctx, event); err != nil {
+		log.Warn().Err(err).Msg("publish blocked-message event failed")
+	}
 }
 
 // PullMessages 拉取历史消息（游标翻页）

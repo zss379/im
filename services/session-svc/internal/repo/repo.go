@@ -44,6 +44,12 @@ func (r *MySQLRepo) GetSessionByConv(ctx context.Context, userID int64, conversa
 	return &s, err
 }
 
+func (r *MySQLRepo) FindByConversation(ctx context.Context, conversationID string) ([]model.Session, error) {
+	var sessions []model.Session
+	err := r.db.WithContext(ctx).Where("conversation_id = ? AND is_deleted = ?", conversationID, false).Find(&sessions).Error
+	return sessions, err
+}
+
 func (r *MySQLRepo) UpdateSession(ctx context.Context, sessionID int64, updates map[string]interface{}) error {
 	return r.db.WithContext(ctx).Model(&model.Session{}).Where("session_id = ?", sessionID).Updates(updates).Error
 }

@@ -13,6 +13,13 @@ redis:
 log:
   json: true
 
+kafka:
+  brokers:
+    - "kafka:9092"
+  topic_message_push: "message_push"
+  topic_session_sync: "session_sync"
+  consumer_group_id: "session-svc"
+
 prometheus:
   enabled: true
   path: /metrics

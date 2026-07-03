@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"strconv"
 	"time"
 
@@ -58,10 +59,22 @@ func (h *MessageHandler) SendMessage(c *gin.Context) {
 
 	resp, err := h.svc.SendMessage(c.Request.Context(), &req, tenantID)
 	if err != nil {
-		log.Err(err).Str("client_msg_id", req.ClientMsgID).Msg("send message failed")
-		metrics.IncMessageSend(strconv.Itoa(int(req.MsgType)), "fail")
-		InternalError(c, "send message failed")
-		return
+		var blocked *service.ErrBlocked
+		var rateLimited *service.ErrRateLimited
+		switch {
+		case errors.As(err, &blocked):
+			Forbidden(c, blocked.Reason)
+			return
+		case errors.As(err, &rateLimited):
+			c.Header("Retry-After", strconv.Itoa(rateLimited.RetryAfter))
+			TooManyRequests(c, "rate limit exceeded")
+			return
+		default:
+			log.Err(err).Str("client_msg_id", req.ClientMsgID).Msg("send message failed")
+			metrics.IncMessageSend(strconv.Itoa(int(req.MsgType)), "fail")
+			InternalError(c, "send message failed")
+			return
+		}
 	}
 
 	metrics.IncMessageSend(strconv.Itoa(int(req.MsgType)), "success")

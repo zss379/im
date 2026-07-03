@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -13,8 +14,14 @@ type Config struct {
 	Kafka    KafkaConfig    `yaml:"kafka"`
 	OpenIM   OpenIMConfig   `yaml:"openim"`
 	Rate     RateConfig     `yaml:"rate"`
+	RC       RcConfig       `yaml:"rc"`
 	Log      LogConfig      `yaml:"log"`
 	Prometheus PromConfig   `yaml:"prometheus"`
+}
+
+type RcConfig struct {
+	Addr    string        `yaml:"addr"`
+	Timeout time.Duration `yaml:"timeout"`
 }
 
 type ServerConfig struct {
@@ -33,9 +40,10 @@ type RedisConfig struct {
 }
 
 type KafkaConfig struct {
-	Brokers          []string `yaml:"brokers"`
-	TopicMessagePush string   `yaml:"topic_message_push" default:"message_push"`
-	TopicBotTrigger  string   `yaml:"topic_bot_trigger" default:"bot_trigger"`
+	Brokers            []string `yaml:"brokers"`
+	TopicMessagePush   string   `yaml:"topic_message_push" default:"message_push"`
+	TopicBotTrigger    string   `yaml:"topic_bot_trigger" default:"bot_trigger"`
+	TopicBlockedMessage string  `yaml:"topic_blocked_message" default:"blocked_message"`
 }
 
 type OpenIMConfig struct {
@@ -82,6 +90,11 @@ func DefaultConfig() *Config {
 			Brokers:          []string{"localhost:9092"},
 			TopicMessagePush: "message_push",
 			TopicBotTrigger:  "bot_trigger",
+			TopicBlockedMessage: "blocked_message",
+		},
+		RC: RcConfig{
+			Addr:    "rc-svc:8088",
+			Timeout: 2 * time.Second,
 		},
 		OpenIM: OpenIMConfig{
 			APIEndpoint: "http://localhost:10002",

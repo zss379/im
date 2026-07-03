@@ -36,3 +36,11 @@ func NotFound(c *gin.Context, msg string) {
 func InternalError(c *gin.Context, msg string) {
 	Error(c, http.StatusInternalServerError, 50001, msg)
 }
+
+func Forbidden(c *gin.Context, reason string) {
+	Error(c, http.StatusForbidden, 40003, reason)
+}
+
+func TooManyRequests(c *gin.Context, msg string) {
+	Error(c, http.StatusTooManyRequests, 40029, msg)
+}

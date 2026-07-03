@@ -21,6 +21,7 @@ import (
 	"github.com/shulian-paas/im/session-svc/internal/config"
 	"github.com/shulian-paas/im/session-svc/internal/handler"
 	"github.com/shulian-paas/im/session-svc/internal/middleware"
+	"github.com/shulian-paas/im/session-svc/internal/mq"
 	"github.com/shulian-paas/im/session-svc/internal/repo"
 	"github.com/shulian-paas/im/session-svc/internal/service"
 )
@@ -40,6 +41,11 @@ func main() {
 	}
 
 	svc := service.NewSessionService(mysqlRepo, cache)
+
+	consumer := mq.NewConsumer(cfg.Kafka.Brokers, cfg.Kafka.TopicMessagePush, cfg.Kafka.ConsumerGroupID, mysqlRepo, cache)
+	producer := mq.NewProducer(cfg.Kafka.Brokers, cfg.Kafka.TopicSessionSync)
+	_ = producer // 下阶段发布会话变更事件时使用
+
 	r := setupRouter(svc, cfg)
 
 	srv := &http.Server{
@@ -54,10 +60,16 @@ func main() {
 		}
 	}()
 
+	// 启动 Kafka consumer（独立 goroutine）
+	consumer.Start(context.Background())
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Info().Msg("shutting down...")
+
+	// 优雅关闭
+	consumer.Stop()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

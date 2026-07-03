@@ -24,6 +24,10 @@ rate:
   user_msg_per_sec: 5
   bot_msg_per_sec: 10
 
+rc:
+  addr: "rc-svc:8088"
+  timeout: 2s
+
 log:
   level: "debug"
   json: true

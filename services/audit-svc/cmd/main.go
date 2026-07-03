@@ -21,6 +21,7 @@ import (
 	"github.com/shulian-paas/im/audit-svc/internal/config"
 	"github.com/shulian-paas/im/audit-svc/internal/handler"
 	"github.com/shulian-paas/im/audit-svc/internal/middleware"
+	"github.com/shulian-paas/im/audit-svc/internal/mq"
 	"github.com/shulian-paas/im/audit-svc/internal/repo"
 	"github.com/shulian-paas/im/audit-svc/internal/service"
 )
@@ -40,7 +41,14 @@ func main() {
 	}
 
 	svc := service.NewAuditService(mysqlRepo)
+
+	// Start blocked-message consumer
+	consumer := mq.NewConsumer(cfg.Kafka.Brokers, cfg.Kafka.TopicBlockedMessage, cfg.Kafka.ConsumerGroupID, mysqlRepo)
+	ctx, cancel := context.WithCancel(context.Background())
+	consumer.Start(ctx)
+
 	r := setupRouter(svc, cfg)
+
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%s", strconv.Itoa(cfg.Server.Port)),
@@ -59,9 +67,12 @@ func main() {
 	<-quit
 	log.Info().Msg("shutting down...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
+	cancel()
+	consumer.Stop()
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Fatal().Err(err).Msg("forced shutdown")
 	}
 	log.Info().Msg("server exited")

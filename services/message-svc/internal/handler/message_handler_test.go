@@ -84,6 +84,7 @@ type mockProducer struct {
 	publishMessageNewFunc      func(ctx context.Context, event *mq.MessagePushEvent) error
 	publishMessageRecalledFunc func(ctx context.Context, event *mq.MessagePushEvent) error
 	publishBotTriggerFunc      func(ctx context.Context, msgID string, tenantID int64, convID string, convType int8, groupID *int64, senderID int64, senderName string, content string, msgType int8, atUserIDs []int64) error
+publishBlockedMessageFunc  func(ctx context.Context, event *mq.BlockedMessageEvent) error
 }
 
 func (m *mockProducer) PublishMessageNew(ctx context.Context, event *mq.MessagePushEvent) error {
@@ -98,6 +99,15 @@ func (m *mockProducer) PublishBotTrigger(ctx context.Context, msgID string, tena
 	if m.publishBotTriggerFunc != nil { return m.publishBotTriggerFunc(ctx, msgID, tenantID, convID, convType, groupID, senderID, senderName, content, msgType, atUserIDs) }
 	return nil
 }
+func (m *mockProducer) PublishBlockedMessage(ctx context.Context, event *mq.BlockedMessageEvent) error {
+	if m.publishBlockedMessageFunc != nil { return m.publishBlockedMessageFunc(ctx, event) }
+	return nil
+}
+
+type mockRCChecker struct {}
+func (m *mockRCChecker) CheckChain(ctx context.Context, req *service.CheckChainReq) (*service.PreflightResult, error) {
+	return &service.PreflightResult{Passed: true}, nil
+}
 
 // setupHandler creates a test Gin engine with real Redis (miniredis) + mock repo/producer.
 func setupHandler(t *testing.T) (*gin.Engine, *mockRepo, *repo.MessageCache, *mockProducer) {
@@ -111,7 +121,7 @@ func setupHandler(t *testing.T) (*gin.Engine, *mockRepo, *repo.MessageCache, *mo
 	mrRepo := &mockRepo{}
 	mrProd := &mockProducer{}
 
-	svc := service.NewMessageService(mrRepo, realCache, mrProd, 10)
+	svc := service.NewMessageService(mrRepo, realCache, mrProd, &mockRCChecker{}, 10)
 	h := NewMessageHandler(svc, realCache)
 
 	r := gin.New()

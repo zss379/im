@@ -16,6 +16,7 @@ type MessagePushEvent struct {
 	EventType      string `json:"event_type"`      // message:new, message:recalled, message:status
 	MsgID          string `json:"msg_id"`
 	ConversationID int64  `json:"conversation_id"`
+	ConvType       int8   `json:"conv_type"`        // 1=single, 2=group
 	SenderID       int64  `json:"sender_id"`
 	MsgType        int8   `json:"msg_type"`
 	Content        string `json:"content,omitempty"` // JSON 摘要
@@ -57,9 +58,10 @@ type BotTriggerConv struct {
 type Producer struct {
 	pushWriter    *kafka.Writer
 	triggerWriter *kafka.Writer
+	blockedWriter *kafka.Writer
 }
 
-func NewProducer(brokers []string, pushTopic, triggerTopic string) *Producer {
+func NewProducer(brokers []string, pushTopic, triggerTopic, blockedTopic string) *Producer {
 	return &Producer{
 		pushWriter: &kafka.Writer{
 			Addr:     kafka.TCP(brokers...),
@@ -69,6 +71,11 @@ func NewProducer(brokers []string, pushTopic, triggerTopic string) *Producer {
 		triggerWriter: &kafka.Writer{
 			Addr:     kafka.TCP(brokers...),
 			Topic:    triggerTopic,
+			Balancer: &kafka.Hash{},
+		},
+		blockedWriter: &kafka.Writer{
+			Addr:     kafka.TCP(brokers...),
+			Topic:    blockedTopic,
 			Balancer: &kafka.Hash{},
 		},
 	}
@@ -112,6 +119,27 @@ func (p *Producer) PublishBotTrigger(ctx context.Context, msgID string, tenantID
 	return p.publish(ctx, p.triggerWriter, event)
 }
 
+// BlockedMessageEvent 拦截消息事件（发送至 audit-svc 记录）
+type BlockedMessageEvent struct {
+	EventType      string `json:"event_type"`
+	TenantID       int64  `json:"tenant_id"`
+	SenderID       int64  `json:"sender_id"`
+	ConversationID int64  `json:"conversation_id"`
+	ConvType       int8   `json:"conv_type"`
+	MsgType        int8   `json:"msg_type"`
+	Content        string `json:"content,omitempty"`
+	BlockedReason  string `json:"blocked_reason"`            // "sensitive_word" | "rate_limit"
+	BlockedDetail  string `json:"blocked_detail,omitempty"`  // hit words or rule info
+	BlockedAt      int64  `json:"blocked_at"`
+}
+
+// PublishBlockedMessage 发布消息拦截事件
+func (p *Producer) PublishBlockedMessage(ctx context.Context, event *BlockedMessageEvent) error {
+	event.EventType = "message:blocked"
+	event.BlockedAt = time.Now().UnixMilli()
+	return p.publish(ctx, p.blockedWriter, event)
+}
+
 // Close 关闭 Kafka Writer
 func (p *Producer) Close() {
 	if err := p.pushWriter.Close(); err != nil {
@@ -119,6 +147,9 @@ func (p *Producer) Close() {
 	}
 	if err := p.triggerWriter.Close(); err != nil {
 		log.Err(err).Msg("close trigger writer")
+	}
+	if err := p.blockedWriter.Close(); err != nil {
+		log.Err(err).Msg("close blocked writer")
 	}
 }
 
