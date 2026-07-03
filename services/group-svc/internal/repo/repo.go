@@ -3,6 +3,7 @@ package repo
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -161,7 +162,35 @@ func (r *MySQLRepo) UpdateMemberMute(ctx context.Context, groupID, userID int64,
 }
 
 func (r *MySQLRepo) SearchMembers(ctx context.Context, groupID int64, keyword string, page, pageSize int) ([]model.MemberSummary, int64, error) {
-	return r.ListMembers(ctx, groupID, page, pageSize, nil)
+	if keyword == "" {
+		return r.ListMembers(ctx, groupID, page, pageSize, nil)
+	}
+
+	uid, err := strconv.ParseInt(keyword, 10, 64)
+	if err != nil {
+		// non-numeric keyword — no name field to search against
+		return []model.MemberSummary{}, 0, nil
+	}
+
+	var total int64
+	if err := r.db.WithContext(ctx).Model(&model.GroupMember{}).
+		Where("group_id = ? AND user_id = ?", groupID, uid).
+		Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var members []model.MemberSummary
+	err = r.db.WithContext(ctx).Model(&model.GroupMember{}).
+		Select("user_id", "role", "muted_until", "joined_at").
+		Where("group_id = ? AND user_id = ?", groupID, uid).
+		Order("role DESC, joined_at ASC").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
+		Find(&members).Error
+	for i := range members {
+		members[i].Muted = members[i].MutedUntil != nil && members[i].MutedUntil.After(time.Now())
+	}
+	return members, total, err
 }
 
 // ---- Join Request ----
