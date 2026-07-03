@@ -43,11 +43,15 @@ func (h *CallbackHandler) HandleCallback(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 50001, "msg": "bot not found"})
 		return
 	}
+	_ = bot // bot config retained for future use (IP whitelist check, etc.)
 
-	// 发回回复消息
-	if err := h.msgClnt.SendReply(state.BotID, req.Reply, req.ReplyType, model.ConversationContext{
-		ConvID:   bot.BotName, // placeholder — full context needed
-	}); err != nil {
+	// 发回回复消息（使用 pending 中保存的会话上下文）
+	conv := model.ConversationContext{
+		ConvID:   state.ConvID,
+		ConvType: state.ConvType,
+		GroupID:  state.GroupID,
+	}
+	if err := h.msgClnt.SendReply(state.BotID, req.Reply, req.ReplyType, conv); err != nil {
 		log.Err(err).Str("event_id", req.EventID).Msg("send callback reply failed")
 	}
 

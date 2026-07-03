@@ -97,6 +97,9 @@ type PendingState struct {
 	BotID     int64  `json:"bot_id"`
 	EventID   string `json:"event_id"`
 	MsgID     string `json:"msg_id"`
+	ConvID    string `json:"conv_id"`
+	ConvType  int8   `json:"conv_type"`
+	GroupID   *int64 `json:"group_id,omitempty"`
 	ExpireAt  int64  `json:"expire_at"`
 }
 

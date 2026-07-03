@@ -67,11 +67,14 @@ func (s *AsyncWebhookService) Invoke(ctx context.Context, webhookURL string, pay
 		return "", fmt.Errorf("unexpected status: %d body=%s", resp.StatusCode, string(respBody))
 	}
 
-	// 存储 pending 状态到 Redis
+	// 存储 pending 状态到 Redis（含会话上下文，供回调时使用）
 	state := &repo.PendingState{
 		BotID:    payload.BotID,
 		EventID:  eventID,
 		MsgID:    payload.Trigger.MsgID,
+		ConvID:   payload.Trigger.Conversation.ConvID,
+		ConvType: payload.Trigger.Conversation.ConvType,
+		GroupID:  payload.Trigger.Conversation.GroupID,
 		ExpireAt: time.Now().Add(s.pendingTTL).Unix(),
 	}
 	if err := s.cache.SetPending(ctx, state, s.pendingTTL); err != nil {
