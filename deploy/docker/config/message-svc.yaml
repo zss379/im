@@ -1,0 +1,33 @@
+server:
+  port: 8081
+
+mongodb:
+  uri: "mongodb://admin:mongo123@mongo:27017/im_prod?authSource=admin"
+  database: "im_prod"
+
+redis:
+  addr: "redis:6379"
+  password: "redis123"
+  db: 0
+
+kafka:
+  brokers:
+    - "kafka:9092"
+  topic_message_push: "message_push"
+  topic_bot_trigger: "bot_trigger"
+
+openim:
+  api_endpoint: "http://openim:10002"
+  secret: "openim-secret"
+
+rate:
+  user_msg_per_sec: 5
+  bot_msg_per_sec: 10
+
+log:
+  level: "debug"
+  json: true
+
+prometheus:
+  enabled: true
+  path: "/metrics"

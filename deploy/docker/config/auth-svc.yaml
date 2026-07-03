@@ -1,0 +1,19 @@
+server:
+  port: 8080
+  jwt_secret: "dev-secret"
+  token_expiry_hours: 24
+
+mysql:
+  dsn: "root:root123@tcp(mysql:3306)/im_auth?charset=utf8mb4&parseTime=True&loc=Local"
+
+redis:
+  addr: "redis:6379"
+  password: "redis123"
+  db: 1
+
+log:
+  json: true
+
+prometheus:
+  enabled: true
+  path: "/metrics"

@@ -7,96 +7,84 @@ global:
   evaluation_interval: 15s
   scrape_timeout:      10s
 
-# 告警配置
 rule_files:
   - "rules/*.yml"
 
-# 抓取目标
 scrape_configs:
-  # Prometheus 自身
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
 
-  # API Gateway
-  - job_name: 'im-api-gateway'
+  - job_name: 'im-gateway-svc'
     metrics_path: '/metrics'
     static_configs:
-      - targets: ['api-gateway:8080']
+      - targets: ['gateway-svc:8080']
 
-  # 微服务
-  - job_name: 'im-user-svc'
+  - job_name: 'im-auth-svc'
     metrics_path: '/metrics'
     static_configs:
-      - targets: ['user-svc:8082']
+      - targets: ['auth-svc:8080']
 
   - job_name: 'im-message-svc'
     metrics_path: '/metrics'
     static_configs:
       - targets: ['message-svc:8081']
 
-  - job_name: 'im-conversation-svc'
+  - job_name: 'im-bot-svc'
     metrics_path: '/metrics'
     static_configs:
-      - targets: ['conversation-svc:8084']
+      - targets: ['bot-svc:8082']
 
-  - job_name: 'im-group-svc'
+  - job_name: 'im-session-svc'
     metrics_path: '/metrics'
     static_configs:
-      - targets: ['group-svc:8083']
+      - targets: ['session-svc:8083']
 
   - job_name: 'im-contact-svc'
     metrics_path: '/metrics'
     static_configs:
-      - targets: ['contact-svc:8090']
+      - targets: ['contact-svc:8084']
 
-  - job_name: 'im-rc-svc'
+  - job_name: 'im-audit-svc'
     metrics_path: '/metrics'
     static_configs:
-      - targets: ['rc-svc:8085']
+      - targets: ['audit-svc:8085']
 
-  - job_name: 'im-bot-svc'
+  - job_name: 'im-group-svc'
     metrics_path: '/metrics'
     static_configs:
-      - targets: ['bot-svc:8086']
+      - targets: ['group-svc:8086']
 
   - job_name: 'im-file-svc'
     metrics_path: '/metrics'
     static_configs:
       - targets: ['file-svc:8087']
 
-  - job_name: 'im-audit-svc'
+  - job_name: 'im-rc-svc'
     metrics_path: '/metrics'
     static_configs:
-      - targets: ['audit-svc:8088']
+      - targets: ['rc-svc:8088']
 
-  - job_name: 'im-card-svc'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['card-svc:8089']
-
-  # OpenIM
   - job_name: 'im-openim'
     metrics_path: '/metrics'
     static_configs:
       - targets: ['openim:10002']
 
-  # 中间件
   - job_name: 'mysql'
     static_configs:
-      - targets: ['mysql:9104']    # mysqld_exporter
+      - targets: ['mysql:9104']
 
   - job_name: 'redis'
     static_configs:
-      - targets: ['redis:9121']    # redis_exporter
+      - targets: ['redis:9121']
 
   - job_name: 'mongo'
     static_configs:
-      - targets: ['mongo:9216']    # mongodb_exporter
+      - targets: ['mongo:9216']
 
   - job_name: 'kafka'
     static_configs:
-      - targets: ['kafka:9308']    # kafka_exporter
+      - targets: ['kafka:9308']
 
   - job_name: 'minio'
     metrics_path: '/minio/v2/metrics/cluster'

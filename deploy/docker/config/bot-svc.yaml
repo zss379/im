@@ -1,0 +1,46 @@
+server:
+  port: 8082
+
+mysql:
+  dsn: "root:root123@tcp(mysql:3306)/im_shared?charset=utf8mb4&parseTime=True"
+
+redis:
+  addr: "redis:6379"
+  password: "redis123"
+  db: 0
+
+kafka:
+  brokers:
+    - "kafka:9092"
+  topic: "bot_trigger"
+  group_id: "bot-svc"
+
+openim:
+  api_endpoint: "http://openim:10002"
+  secret: "openim-secret"
+
+webhook:
+  sync_timeout: "3s"
+  max_retries: 3
+  retry_backoff:
+    - "100ms"
+    - "500ms"
+    - "1s"
+  max_body_size_mb: 1
+  pending_ttl: "30m"
+
+sse:
+  max_connections: 1000
+  idle_timeout: "5m"
+  max_stream_duration: "30m"
+
+rate:
+  bot_msg_per_sec: 10
+
+log:
+  level: "debug"
+  json: true
+
+prometheus:
+  enabled: true
+  path: "/metrics"

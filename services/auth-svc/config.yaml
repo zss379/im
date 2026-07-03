@@ -1,5 +1,5 @@
 server:
-  port: 8081
+  port: 8080
   jwt_secret: "changeme-in-production"
   token_expiry_hours: 24
 

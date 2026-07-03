@@ -54,7 +54,7 @@ func Load(path string) (*Config, error) {
 func DefaultConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
-			Port:             8081,
+			Port:             8080,
 			JWTSecret:        "changeme-in-production",
 			TokenExpiryHours: 24,
 		},

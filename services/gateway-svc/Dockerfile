@@ -10,5 +10,5 @@ FROM alpine:3.19
 RUN apk --no-cache add ca-certificates tzdata
 WORKDIR /app
 COPY --from=builder /app/bin/service .
-EXPOSE 8081
+EXPOSE 8080
 ENTRYPOINT ["./service"]

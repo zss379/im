@@ -1,0 +1,71 @@
+server:
+  port: 8080
+
+auth:
+  jwt_secret: "dev-secret"
+  public_paths:
+    - "POST:/api/v1/auth/login"
+    - "POST:/api/v1/auth/refresh"
+
+rate_limit:
+  enabled: true
+  refill_rate: 50
+  bucket_size: 200
+
+cors:
+  enabled: true
+  allowed_origins:
+    - "*"
+  allowed_methods:
+    - GET
+    - POST
+    - PUT
+    - DELETE
+    - PATCH
+    - OPTIONS
+  allowed_headers:
+    - Origin
+    - Content-Type
+    - Authorization
+    - X-Request-ID
+
+routes:
+  - prefix: "/api/v1/auth"
+    backend: "http://auth-svc:8080"
+    timeout: 30s
+  - prefix: "/api/v1/messages"
+    backend: "http://message-svc:8081"
+    timeout: 60s
+  - prefix: "/api/v1/bots"
+    backend: "http://bot-svc:8082"
+    timeout: 30s
+  - prefix: "/api/v1/sessions"
+    backend: "http://session-svc:8083"
+    timeout: 30s
+  - prefix: "/api/v1/contacts"
+    backend: "http://contact-svc:8084"
+    timeout: 30s
+  - prefix: "/api/v1/audit"
+    backend: "http://audit-svc:8085"
+    timeout: 30s
+  - prefix: "/api/v1/groups"
+    backend: "http://group-svc:8086"
+    timeout: 30s
+  - prefix: "/api/v1/files"
+    backend: "http://file-svc:8087"
+    timeout: 120s
+  - prefix: "/api/v1/rc"
+    backend: "http://rc-svc:8088"
+    timeout: 30s
+
+prometheus:
+  enabled: true
+  path: "/metrics"
+
+health_check:
+  interval: "30s"
+  timeout: "5s"
+
+log:
+  level: "debug"
+  json: true

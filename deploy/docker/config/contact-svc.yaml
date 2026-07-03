@@ -1,0 +1,18 @@
+server:
+  port: 8084
+  jwt_secret: "dev-secret"
+
+mysql:
+  dsn: "root:root123@tcp(mysql:3306)/im_contact?charset=utf8mb4&parseTime=True&loc=Local"
+
+redis:
+  addr: "redis:6379"
+  password: "redis123"
+  db: 4
+
+log:
+  json: true
+
+prometheus:
+  enabled: true
+  path: /metrics

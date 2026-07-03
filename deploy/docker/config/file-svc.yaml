@@ -1,0 +1,25 @@
+server:
+  port: 8087
+  jwt_secret: "dev-secret"
+
+mysql:
+  dsn: "root:root123@tcp(mysql:3306)/im_file?charset=utf8mb4&parseTime=True&loc=Local"
+
+redis:
+  addr: "redis:6379"
+  password: "redis123"
+  db: 6
+
+minio:
+  endpoint: "minio:9000"
+  access_key: "minioadmin"
+  secret_key: "minioadmin"
+  bucket: "im-files"
+  use_ssl: false
+
+log:
+  json: true
+
+prometheus:
+  enabled: true
+  path: /metrics

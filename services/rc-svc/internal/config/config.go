@@ -53,7 +53,7 @@ func Load(path string) (*Config, error) {
 
 func DefaultConfig() *Config {
 	return &Config{
-		Server: ServerConfig{Port: 8085, JWTSecret: "dev-secret"},
+		Server: ServerConfig{Port: 8088, JWTSecret: "dev-secret"},
 		MySQL: MySQLConfig{
 			DSN: "root:root123@tcp(localhost:3306)/im_shared?charset=utf8mb4&parseTime=True&loc=Local",
 		},
